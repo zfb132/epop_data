@@ -28,7 +28,15 @@ Run the script from the command line, specifying the required parameters. Here's
 
 ## Example
 To download RRI data from January 1, 2020, to December 31, 2020, into the data folder using 8 parallel processes:  
-`python epop_downloader.py -s 2020-01-01 -e 2020-12-31 -d RRI -f data -p 8`
+`python epop_downloader.py -s 2020-01-01 -e 2020-12-31 -d RRI -f data -p 8`  
+The output will look something like this:  
+```txt
+Overall Progress:   0%|                                                                          | 0/366 [00:00<?, ?file/s
+Downloading 2020-01-01-RRI.tar:  19%|█████████                                          | 248/0.00k [00:43<02:11, 7.79MB/s]
+Downloading 2020-01-02-RRI.tar:  21%|███████████                                          | 183/869 [00:43<01:54, 6.00MB/s]
+Downloading 2020-01-03-RRI.tar:  25%|█████████████                                        | 224/903 [00:42<01:27, 7.78MB/s]
+Downloading 2020-01-04-RRI.tar:  19%|█████████                                            | 185/997 [00:42<02:21, 5.75MB/s]
+```
 
 ## Disclaimer
 This script is provided as-is, with no warranty or guarantee of any kind. Use at your own risk. The author is not responsible for any damages or losses caused by this script.

@@ -6,7 +6,7 @@
 import argparse
 import os
 import requests
-from multiprocessing import Pool, cpu_count, freeze_support
+from multiprocessing import Pool, cpu_count, freeze_support, Array
 from tqdm import tqdm
 import random
 import json
@@ -14,11 +14,24 @@ from datetime import datetime, timedelta
 
 from log import initLog
 
-logging = initLog('reserve.log','download')
+logging = initLog('download.log', __name__)
 
 # User-Agent pool
 # https://www.useragents.me/#most-common-desktop-useragents-json-csv
 user_agents = json.loads(open("user_agents.json").read())
+
+def get_pgb_pos() -> int:
+    # Acquire lock and get a progress bar slot
+    with pgb_slots.get_lock():
+        for i in range(PROC_NUM):
+            if pgb_slots[i] == 0:
+                pgb_slots[i] = 1
+                return i
+
+
+def release_pgb_pos(slot: int):
+    with pgb_slots.get_lock():
+        pgb_slots[slot] = 0
 
 def set_headers():
     return {
@@ -40,7 +53,7 @@ def download_file(args):
     url, params, save_path, task_id, err_name, not_found_name = args
     if is_file_downloaded(save_path, url, params):
         return f"Skipped: {save_path}"
-
+    pgb_pos = get_pgb_pos()
     try:
         with requests.post(url, params=params, headers=set_headers(), stream=True) as response:
             if response.status_code == 404:
@@ -53,11 +66,11 @@ def download_file(args):
             chunk_size = 1024 * 1024
             with open(save_path, 'wb') as f, tqdm(
                 desc=f"Downloading {os.path.basename(save_path)}", 
-                total=int(response.headers.get('content-length', 0))/ (1024 * 1024), 
-                unit='MB', 
-                unit_scale=True, 
+                total=int(response.headers.get('content-length', 0))/ (1024 * 1024),
+                unit='MB',
+                unit_scale=True,
                 unit_divisor=1024 * 1024,
-                position=task_id,
+                position=pgb_pos+1,
                 leave=False
             ) as bar:
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -68,6 +81,8 @@ def download_file(args):
         with open(err_name, "a") as error_file:
             error_file.write(f"{url} - {e}\n")
         return f"Error: {save_path}"
+    finally:
+        release_pgb_pos(pgb_pos)
 
 
 def generate_dates(start_date, end_date):
@@ -98,8 +113,8 @@ def main(start_date, end_date, product_name, save_folder, process_count, err_nam
         download_args.append((url, params, save_path, (index%process_count)+1, err_name, not_found_name))
         index += 1
 
-    with Pool(process_count) as pool:
-        for result in tqdm(pool.imap_unordered(download_file, download_args), total=len(download_args), desc="Overall Progress", unit="file", position=0, leave=False):
+    with Pool(process_count, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),)) as pool:
+        for result in tqdm(pool.imap_unordered(download_file, download_args), total=len(download_args), desc="Overall Progress", unit="file", position=0, leave=True):
             logging.info(result)
 
 
@@ -109,13 +124,17 @@ def parse_args():
     parser.add_argument('-e', '--end-date', type=str, default="2020-12-31", help='end date, format: YYYY-MM-DD')
     parser.add_argument('-d', '--data-name', type=str, default="RRI", help='data name, options: CER GAP IRM MGF RRI FAI SEI')
     parser.add_argument('-f', '--save-folder', type=str, default="data", help='save folder, default: data')
-    parser.add_argument('-p', '--parallel', type=int, default=cpu_count(), help='number of parallel processes')
+    parser.add_argument('-p', '--parallel', type=int, default=cpu_count(), help='number of parallel processes, default: cpu_count()')
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     freeze_support()
     args = parse_args()
+    global PROC_NUM
+    PROC_NUM = args.parallel
+    # This array is shared among all PROC_NUM and allows them to keep track of which tqdm "positions" are occupied / free
+    pgb_slots = Array("B", [0] * PROC_NUM)
     err_name = f"{args.start_date}_{args.end_date}_errors.txt"
     if os.path.exists(err_name):
         os.remove(err_name)
@@ -123,6 +142,6 @@ if __name__ == '__main__':
     if os.path.exists(not_found_name):
         os.remove(not_found_name)
     main(
-        args.start_date, args.end_date, args.data_name, args.save_folder, args.parallel, 
+        args.start_date, args.end_date, args.data_name, args.save_folder, PROC_NUM, 
         err_name, not_found_name
     )
