@@ -6,7 +6,7 @@
 import argparse
 import os
 import requests
-from multiprocessing import Pool, cpu_count, freeze_support, Array
+from multiprocessing import Pool, cpu_count, freeze_support, Manager
 from tqdm import tqdm
 import random
 import json
@@ -20,18 +20,15 @@ logging = initLog('download.log', __name__)
 # https://www.useragents.me/#most-common-desktop-useragents-json-csv
 user_agents = json.loads(open("user_agents.json").read())
 
-def get_pgb_pos() -> int:
+def get_pgb_pos(shared_list):
     # Acquire lock and get a progress bar slot
-    with pgb_slots.get_lock():
-        for i in range(PROC_NUM):
-            if pgb_slots[i] == 0:
-                pgb_slots[i] = 1
-                return i
+    for i in range(PROC_NUM):
+        if shared_list[i] == 0:
+            shared_list[i] = 1
+            return i
 
-
-def release_pgb_pos(slot: int):
-    with pgb_slots.get_lock():
-        pgb_slots[slot] = 0
+def release_pgb_pos(shared_list, slot):
+    shared_list[slot] = 0
 
 def set_headers():
     return {
@@ -50,10 +47,10 @@ def is_file_downloaded(save_path, url, params):
     return False
 
 def download_file(args):
-    url, params, save_path, task_id, err_name, not_found_name = args
+    url, params, save_path, err_name, not_found_name, shared_list = args
     if is_file_downloaded(save_path, url, params):
         return f"Skipped: {save_path}"
-    pgb_pos = get_pgb_pos()
+    pgb_pos = get_pgb_pos(shared_list)
     try:
         with requests.post(url, params=params, headers=set_headers(), stream=True) as response:
             if response.status_code == 404:
@@ -82,7 +79,7 @@ def download_file(args):
             error_file.write(f"{url} - {e}\n")
         return f"Error: {save_path}"
     finally:
-        release_pgb_pos(pgb_pos)
+        release_pgb_pos(shared_list, pgb_pos)
 
 
 def generate_dates(start_date, end_date):
@@ -91,11 +88,10 @@ def generate_dates(start_date, end_date):
     return [(start + timedelta(days=x)).strftime("%Y-%m-%d") for x in range((end - start).days + 1)]
 
 
-def main(start_date, end_date, product_name, save_folder, process_count, err_name, not_found_name):
+def main(start_date, end_date, product_name, save_folder, process_count, err_name, not_found_name, shared_list, lock):
     dates = generate_dates(start_date, end_date)
     download_args = []
 
-    index = 0
     for date in dates:
         year, month, day = date.split('-')
         base_href = f"/{year}/{month}/{day}/{product_name}/"
@@ -110,10 +106,9 @@ def main(start_date, end_date, product_name, save_folder, process_count, err_nam
         year_folder = os.path.join(save_folder, year)
         os.makedirs(year_folder, exist_ok=True)
         save_path = os.path.join(year_folder, f"{date}-{product_name}.tar")
-        download_args.append((url, params, save_path, (index%process_count)+1, err_name, not_found_name))
-        index += 1
+        download_args.append((url, params, save_path, err_name, not_found_name, shared_list))
 
-    with Pool(process_count, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),)) as pool:
+    with Pool(process_count, initializer=tqdm.set_lock, initargs=(lock,)) as pool:
         for result in tqdm(pool.imap_unordered(download_file, download_args), total=len(download_args), desc="Overall Progress", unit="file", position=0, leave=True):
             logging.info(result)
 
@@ -128,20 +123,22 @@ def parse_args():
     return parser.parse_args()
 
 
+args = parse_args()
+PROC_NUM = args.parallel
+
 if __name__ == '__main__':
     freeze_support()
-    args = parse_args()
-    global PROC_NUM
-    PROC_NUM = args.parallel
-    # This array is shared among all PROC_NUM and allows them to keep track of which tqdm "positions" are occupied / free
-    pgb_slots = Array("B", [0] * PROC_NUM)
     err_name = f"{args.start_date}_{args.end_date}_errors.txt"
     if os.path.exists(err_name):
         os.remove(err_name)
     not_found_name = f"{args.start_date}_{args.end_date}_not_found.txt"
     if os.path.exists(not_found_name):
         os.remove(not_found_name)
-    main(
-        args.start_date, args.end_date, args.data_name, args.save_folder, PROC_NUM, 
-        err_name, not_found_name
-    )
+    # This array is shared among all PROC_NUM and allows them to keep track of which tqdm "positions" are occupied / free
+    with Manager() as manager:
+        lock = manager.Lock()
+        shared_list = manager.list([0] * PROC_NUM)
+        main(
+            args.start_date, args.end_date, args.data_name, args.save_folder, PROC_NUM, 
+            err_name, not_found_name, shared_list, lock
+        )
