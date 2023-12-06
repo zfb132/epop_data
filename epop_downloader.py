@@ -12,6 +12,10 @@ import random
 import json
 from datetime import datetime, timedelta
 
+from log import initLog
+
+logging = initLog('reserve.log','download')
+
 # User-Agent pool
 # https://www.useragents.me/#most-common-desktop-useragents-json-csv
 user_agents = json.loads(open("user_agents.json").read())
@@ -95,8 +99,8 @@ def main(start_date, end_date, product_name, save_folder, process_count, err_nam
         index += 1
 
     with Pool(process_count) as pool:
-        for _ in tqdm(pool.imap_unordered(download_file, download_args), total=len(download_args), desc="Overall Progress", unit="file", position=0, leave=False):
-            pass
+        for result in tqdm(pool.imap_unordered(download_file, download_args), total=len(download_args), desc="Overall Progress", unit="file", position=0, leave=False):
+            logging.info(result)
 
 
 def parse_args():
