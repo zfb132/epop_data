@@ -38,6 +38,9 @@ Downloading 2020-01-03-RRI.tar:  25%|█████████████    
 Downloading 2020-01-04-RRI.tar:  19%|█████████                                            | 185/997 [00:42<02:21, 5.75MB/s]
 ```
 
+## Note
+An interactive web page is available at [edex.phys.ucalgary.ca](https://edex.phys.ucalgary.ca/)
+
 ## Disclaimer
 This script is provided as-is, with no warranty or guarantee of any kind. Use at your own risk. The author is not responsible for any damages or losses caused by this script.
 It is the user's responsibility to ensure that they have the right to download the data they are requesting.
